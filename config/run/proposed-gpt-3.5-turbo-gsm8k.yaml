@@ -1,0 +1,44 @@
+# PEC-SC (Plan-Execute-Check Self-Consistency) - Proposed Method
+# Run ID: proposed-gpt-3.5-turbo-gsm8k
+
+run_id: proposed-gpt-3.5-turbo-gsm8k
+
+method:
+  type: pec-sc
+  name: Plan-Execute-Check Self-Consistency
+  description: "Prompt-only protocol with PLAN, EXECUTION, AUDIT, FINAL structure and composite scoring"
+  
+  # Scoring weights
+  alpha: 0.4  # answer agreement weight
+  beta: 0.3   # plan coverage weight
+  # audit weight = 1 - alpha - beta = 0.3
+  
+  # PEC-SC specific parameters
+  plan_items: 4  # number of plan steps to request
+  audit_checks: 3  # number of audit statements per sample
+  
+  # Prompt template sections
+  prompt_sections:
+    - PLAN
+    - EXECUTION
+    - AUDIT
+    - FINAL
+
+model:
+  provider: openai
+  name: gpt-3.5-turbo
+  temperature: 0.7
+  max_tokens: 400  # reduced to keep total budget ~= baseline
+
+dataset:
+  name: gsm8k
+  split: test
+  n_samples: 200
+  shuffle_seed: 42
+
+inference:
+  k_samples: 6
+  m_audit_checks: 3
+  seed: 42
+  
+# WandB will inherit from parent config unless overridden

@@ -1,0 +1,33 @@
+# Standard Self-Consistency with CoT - Baseline
+# Run ID: comparative-0-gpt-3.5-turbo-gsm8k
+
+run_id: comparative-0-gpt-3.5-turbo-gsm8k
+
+method:
+  type: self-consistency
+  name: Self-Consistency with CoT
+  description: "Standard self-consistency baseline with majority vote over CoT samples"
+  
+  # Simple majority voting
+  voting: majority
+  
+  # Prompt template
+  prompt_type: cot  # chain-of-thought
+
+model:
+  provider: openai
+  name: gpt-3.5-turbo
+  temperature: 0.7
+  max_tokens: 512  # standard CoT tokens
+
+dataset:
+  name: gsm8k
+  split: test
+  n_samples: 200
+  shuffle_seed: 42
+
+inference:
+  k_samples: 6  # same number of samples as PEC-SC
+  seed: 42
+  
+# WandB will inherit from parent config unless overridden

@@ -1,18 +1,39 @@
 # Main configuration for Hydra
-# This file will be populated by AI code generator based on experimental design
+# PEC-SC: Plan-Execute-Check Self-Consistency experiment
 
 defaults:
   - _self_
   - run: ???  # loads from config/run/, accessible as 'run=' in CLI
 
-# Execution mode: main, sanity, or pilot
-mode: main
+# Execution mode: full, sanity, or pilot
+mode: full
 
 # Results output directory
 results_dir: .research/results
 
-# WandB configuration (will be set by AI agent)
+# WandB configuration
 wandb:
-  entity: ???
-  project: ???
+  entity: airas
+  project: 20260313-tanaka-test-v4
   mode: online
+
+# Model API configuration
+model:
+  provider: openai  # or anthropic
+  name: gpt-3.5-turbo
+  temperature: 0.7
+  max_tokens: 512
+
+# Dataset configuration
+dataset:
+  name: gsm8k
+  split: test
+  n_samples: 200  # subsample for manageable runtime
+  
+# Common inference parameters
+inference:
+  k_samples: 6  # number of samples per question
+  m_audit_checks: 3  # number of audit checks in PEC-SC
+  seed: 42
+  alpha: 0.4  # weight for answer agreement
+  beta: 0.3  # weight for plan coverage
