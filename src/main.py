@@ -55,19 +55,23 @@ def apply_mode_overrides(cfg: DictConfig) -> DictConfig:
     """
     mode = cfg.mode
 
-    # [VALIDATOR FIX - Attempt 1]
-    # [PROBLEM]: Sanity mode processed 200 samples instead of 10; validation output missing
-    # [CAUSE]: Mode parameter not being read correctly or overrides not applying
-    # [FIX]: Added debug output to verify mode and n_samples before and after override
+    # [VALIDATOR FIX - Attempt 2]
+    # [PROBLEM]: Mode passed as 'sanity_check' instead of 'sanity', causing overrides to fail
+    # [CAUSE]: GitHub Actions workflow or Hydra CLI passes mode=sanity_check
+    # [FIX]: Normalize mode to handle both 'sanity' and 'sanity_check' as sanity mode
     #
     # [OLD CODE]:
-    # (no debug output)
+    # if mode == "sanity":
     #
     # [NEW CODE]:
     print(f"DEBUG: Mode detected: '{mode}'")
     print(f"DEBUG: n_samples before override: {cfg.dataset.n_samples}")
 
-    if mode == "sanity":
+    # Normalize mode: treat 'sanity_check' as 'sanity'
+    normalized_mode = mode.replace("_check", "") if mode else "full"
+    print(f"DEBUG: Normalized mode: '{normalized_mode}'")
+
+    if normalized_mode == "sanity":
         # Sanity mode: minimal execution for validation
         print("Applying sanity mode overrides...")
 
@@ -98,7 +102,7 @@ def apply_mode_overrides(cfg: DictConfig) -> DictConfig:
         print(f"DEBUG: n_samples after override: {cfg.dataset.n_samples}")
         print(f"DEBUG: k_samples after override: {cfg.inference.k_samples}")
 
-    elif mode == "pilot":
+    elif normalized_mode == "pilot":
         # Pilot mode: 20% of full run for preliminary results
         print("Applying pilot mode overrides...")
 
@@ -116,7 +120,7 @@ def apply_mode_overrides(cfg: DictConfig) -> DictConfig:
         cfg.wandb.mode = "online"
         OmegaConf.set_struct(cfg, True)
 
-    elif mode == "full":
+    elif normalized_mode == "full":
         # Full mode: no overrides needed
         print("Running in full mode (no overrides)...")
 
@@ -126,7 +130,9 @@ def apply_mode_overrides(cfg: DictConfig) -> DictConfig:
         OmegaConf.set_struct(cfg, True)
 
     else:
-        print(f"Warning: Unknown mode '{mode}', proceeding with original config")
+        print(
+            f"Warning: Unknown mode '{mode}' (normalized: '{normalized_mode}'), proceeding with original config"
+        )
 
     return cfg
 

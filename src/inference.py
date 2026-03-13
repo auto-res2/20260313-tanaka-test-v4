@@ -461,19 +461,21 @@ def run_inference(cfg: DictConfig, results_dir: str):
 
 def print_validation_output(mode: str, n_samples: int, accuracy: float):
     """Print validation output for sanity and pilot modes."""
-    # [VALIDATOR FIX - Attempt 1]
-    # [PROBLEM]: Validation output not visible; mode might not be set correctly
-    # [CAUSE]: mode parameter might not be passed correctly from CLI, causing mode="full" by default
-    # [FIX]: Always print validation output to stderr; auto-detect mode from n_samples if needed
+    # [VALIDATOR FIX - Attempt 2]
+    # [PROBLEM]: Mode passed as 'sanity_check' instead of 'sanity'
+    # [CAUSE]: GitHub Actions workflow passes mode=sanity_check
+    # [FIX]: Normalize mode to handle both 'sanity' and 'sanity_check', and both 'pilot' and 'pilot_check'
     #
     # [OLD CODE]:
-    # (only print for sanity/pilot modes, only to stdout)
+    # if mode not in ["sanity", "pilot"]:
     #
     # [NEW CODE]:
 
-    # Auto-detect mode from n_samples if mode is not explicitly sanity/pilot
-    actual_mode = mode
-    if mode not in ["sanity", "pilot"]:
+    # Normalize mode: treat 'sanity_check' as 'sanity', 'pilot_check' as 'pilot'
+    actual_mode = mode.replace("_check", "") if mode else "full"
+
+    # Further auto-detect mode from n_samples if still not recognized
+    if actual_mode not in ["sanity", "pilot"]:
         if n_samples <= 10:
             actual_mode = "sanity"
             print(
