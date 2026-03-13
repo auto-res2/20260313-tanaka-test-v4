@@ -314,8 +314,17 @@ def run_inference(cfg: DictConfig, results_dir: str):
     # Initialize model client
     client, provider = get_model_client(cfg)
 
+    # [VALIDATOR FIX - Attempt 1]
+    # [PROBLEM]: ConfigAttributeError: Key 'method' is not in struct
+    # [CAUSE]: method config is loaded under cfg.run.method namespace by Hydra defaults, not at top level
+    # [FIX]: Changed cfg.method to cfg.run.method
+    #
+    # [OLD CODE]:
+    # method_type = cfg.method.type.lower()
+    #
+    # [NEW CODE]:
     # Determine method type
-    method_type = cfg.method.type.lower()
+    method_type = cfg.run.method.type.lower()
 
     # Set random seed
     random.seed(cfg.inference.seed)
@@ -340,8 +349,8 @@ def run_inference(cfg: DictConfig, results_dir: str):
             for _ in range(k):
                 prompt = get_prompt_pec_sc(
                     question,
-                    plan_items=cfg.method.plan_items,
-                    audit_checks=cfg.method.audit_checks,
+                    plan_items=cfg.run.method.plan_items,
+                    audit_checks=cfg.run.method.audit_checks,
                 )
                 response = generate_completion(
                     client,
@@ -356,7 +365,7 @@ def run_inference(cfg: DictConfig, results_dir: str):
 
             # Select best answer
             prediction, metadata = select_best_pec_sc(
-                samples, alpha=cfg.method.alpha, beta=cfg.method.beta
+                samples, alpha=cfg.run.method.alpha, beta=cfg.run.method.beta
             )
 
             # Log additional PEC-SC metrics
