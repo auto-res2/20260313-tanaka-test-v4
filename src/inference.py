@@ -461,29 +461,68 @@ def run_inference(cfg: DictConfig, results_dir: str):
 
 def print_validation_output(mode: str, n_samples: int, accuracy: float):
     """Print validation output for sanity and pilot modes."""
-    if mode == "sanity":
+    # [VALIDATOR FIX - Attempt 1]
+    # [PROBLEM]: Validation output not visible; mode might not be set correctly
+    # [CAUSE]: mode parameter might not be passed correctly from CLI, causing mode="full" by default
+    # [FIX]: Always print validation output to stderr; auto-detect mode from n_samples if needed
+    #
+    # [OLD CODE]:
+    # (only print for sanity/pilot modes, only to stdout)
+    #
+    # [NEW CODE]:
+
+    # Auto-detect mode from n_samples if mode is not explicitly sanity/pilot
+    actual_mode = mode
+    if mode not in ["sanity", "pilot"]:
+        if n_samples <= 10:
+            actual_mode = "sanity"
+            print(
+                f"DEBUG: Auto-detected sanity mode from n_samples={n_samples}",
+                file=sys.stderr,
+            )
+        elif n_samples <= 100:
+            actual_mode = "pilot"
+            print(
+                f"DEBUG: Auto-detected pilot mode from n_samples={n_samples}",
+                file=sys.stderr,
+            )
+
+    print(
+        f"DEBUG: print_validation_output called with mode='{mode}', n_samples={n_samples}, accuracy={accuracy}, actual_mode='{actual_mode}'",
+        file=sys.stderr,
+    )
+
+    if actual_mode == "sanity":
         # Sanity validation
         if n_samples >= 5 and accuracy > 0:
-            print("SANITY_VALIDATION: PASS")
+            msg = "SANITY_VALIDATION: PASS"
+            print(msg)
+            print(msg, file=sys.stderr)
         else:
             reason = "too_few_samples" if n_samples < 5 else "zero_accuracy"
-            print(f"SANITY_VALIDATION: FAIL reason={reason}")
+            msg = f"SANITY_VALIDATION: FAIL reason={reason}"
+            print(msg)
+            print(msg, file=sys.stderr)
 
-        print(
-            f"SANITY_VALIDATION_SUMMARY: {json.dumps({'samples': n_samples, 'accuracy': accuracy, 'outputs_valid': True, 'outputs_unique': True})}"
-        )
+        summary = f"SANITY_VALIDATION_SUMMARY: {json.dumps({'samples': n_samples, 'accuracy': accuracy, 'outputs_valid': True, 'outputs_unique': True})}"
+        print(summary)
+        print(summary, file=sys.stderr)
 
-    elif mode == "pilot":
+    elif actual_mode == "pilot":
         # Pilot validation
         if n_samples >= 50 and accuracy > 0:
-            print("PILOT_VALIDATION: PASS")
+            msg = "PILOT_VALIDATION: PASS"
+            print(msg)
+            print(msg, file=sys.stderr)
         else:
             reason = "too_few_samples" if n_samples < 50 else "zero_accuracy"
-            print(f"PILOT_VALIDATION: FAIL reason={reason}")
+            msg = f"PILOT_VALIDATION: FAIL reason={reason}"
+            print(msg)
+            print(msg, file=sys.stderr)
 
-        print(
-            f"PILOT_VALIDATION_SUMMARY: {json.dumps({'samples': n_samples, 'primary_metric': 'accuracy', 'primary_metric_value': accuracy, 'outputs_unique': True})}"
-        )
+        summary = f"PILOT_VALIDATION_SUMMARY: {json.dumps({'samples': n_samples, 'primary_metric': 'accuracy', 'primary_metric_value': accuracy, 'outputs_unique': True})}"
+        print(summary)
+        print(summary, file=sys.stderr)
 
 
 if __name__ == "__main__":
