@@ -340,5 +340,113 @@
     "experimental_code": "import re\nfrom collections import Counter\n\n# --- Parsing helpers ---\nPLAN_RE = re.compile(r\"PLAN\\s*:\\s*(.*?)\\n(?:EXECUTION|SOLUTION)\\s*:\", re.S|re.I)\nEXEC_RE = re.compile(r\"(?:EXECUTION|SOLUTION)\\s*:\\s*(.*?)\\nAUDIT\\s*:\", re.S|re.I)\nAUDIT_RE = re.compile(r\"AUDIT\\s*:\\s*(.*?)\\nFINAL\\s*:\", re.S|re.I)\nFINAL_RE = re.compile(r\"FINAL\\s*:\\s*(.*)\", re.I)\n\nTAG_RE = re.compile(r\"\\(P(\\d+)\\)\")\n\ndef extract_sections(text: str):\n    plan = (PLAN_RE.search(text).group(1).strip() if PLAN_RE.search(text) else \"\")\n    execu = (EXEC_RE.search(text).group(1).strip() if EXEC_RE.search(text) else \"\")\n    audit = (AUDIT_RE.search(text).group(1).strip() if AUDIT_RE.search(text) else \"\")\n    final = (FINAL_RE.search(text).group(1).strip() if FINAL_RE.search(text) else \"\")\n    return plan, execu, audit, final\n\ndef extract_answer(final_text: str):\n    # GSM-like: last integer; StrategyQA-like: yes/no\n    m = re.findall(r\"-?\\d+\", final_text)\n    if m:\n        return m[-1]\n    m2 = re.search(r\"\\b(yes|no)\\b\", final_text.lower())\n    return m2.group(1) if m2 else None\n\ndef plan_items(plan: str):\n    # count numbered items like \"1)\" or \"1.\" or \"-\"\n    items = re.split(r\"\\n\\s*(?:\\d+[\\).]|[-*])\\s+\", \"\\n\" + plan)\n    items = [it.strip() for it in items if it.strip()]\n    return items\n\ndef plan_coverage(plan: str, execution: str):\n    n = max(1, len(plan_items(plan)))\n    used = set(int(x) for x in TAG_RE.findall(execution) if x.isdigit())\n    # assume plan items are 1..n\n    covered = sum(1 for i in range(1, n+1) if i in used)\n    return covered / n\n\n# --- Auditable checks ---\nSAFE_CHARS = re.compile(r\"^[0-9\\s\\+\\-\\*\\/\\(\\)\\.=]+$\")\n\ndef eval_expr(expr: str):\n    # very small safe evaluator for arithmetic-only expressions\n    expr = expr.strip()\n    if not SAFE_CHARS.match(expr):\n        raise ValueError(\"unsafe\")\n    # allow equality like \"12+3=15\"\n    if \"=\" in expr:\n        left, right = expr.split(\"=\", 1)\n        return abs(eval(left, {\"__builtins__\": {}}, {}) - eval(right, {\"__builtins__\": {}}, {})) < 1e-9\n    return eval(expr, {\"__builtins__\": {}}, {})\n\ndef audit_pass_rate(audit: str):\n    # Expect lines like: \"- CHECK: 12+3=15\" or \"1) 7*8=56\"\n    lines = [ln.strip() for ln in audit.splitlines() if ln.strip()]\n    checks = []\n    for ln in lines:\n        # grab the arithmetic-ish tail\n        m = re.search(r\"([0-9\\s\\+\\-\\*\\/\\(\\)\\.]+=+[0-9\\s\\+\\-\\*\\/\\(\\)\\.]*)\", ln)\n        if m:\n            checks.append(m.group(1))\n    if not checks:\n        return 0.0\n    ok = 0\n    for c in checks:\n        try:\n            res = eval_expr(c)\n            ok += int(bool(res))\n        except Exception:\n            ok += 0\n    return ok / len(checks)\n\ndef pec_sc_select(text_samples, alpha=0.6, beta=0.2):\n    # text_samples: list[str] each containing PLAN/EXECUTION/AUDIT/FINAL\n    parsed = [extract_sections(t) for t in text_samples]\n    answers = [extract_answer(p[3]) for p in parsed]\n    maj = Counter(answers).most_common(1)[0][0]\n\n    scored = []\n    for (plan, execu, audit, final) in parsed:\n        ans = extract_answer(final)\n        maj_agree = 1.0 if ans == maj else 0.0\n        cov = plan_coverage(plan, execu)\n        apr = audit_pass_rate(audit)\n        score = alpha * maj_agree + beta * cov + (1 - alpha - beta) * apr\n        scored.append((score, ans, plan, execu, audit, final))\n\n    scored.sort(key=lambda x: x[0], reverse=True)\n    best = scored[0]\n    return best[1], {\"score\": best[0], \"maj\": maj, \"plan\": best[2], \"execution\": best[3], \"audit\": best[4], \"final\": best[5]}\n\n# Integration note:\n# Generate K samples with a single prompt template requiring:\n# PLAN (2-4 items), EXECUTION with (P1)... tags, AUDIT with 2-4 arithmetic checks, FINAL.\n# Then call pec_sc_select(samples).",
     "expected_result": "At equal token budget vs SC (majority vote):\n- GSM8K: SC ~58–60% accuracy; S2C lexical overlap ~61–63%; **PEC-SC ~64–67%** (+4–7 over SC).\n- StrategyQA: SC ~66–68%; S2C ~68–70%; **PEC-SC ~70–72%** (+3–5 over SC).\nSecondary expectations:\n- Audit pass rate correlates with correctness (Spearman ρ ≈ 0.3–0.5 on GSM8K).\n- Seed variance of accuracy reduced by ~20–30% relative (e.g., std dev drops from ~1.8pp to ~1.2–1.4pp across 5 seeds).\n- Contradiction rate (audit fail or coverage<1) drops by ~25–40% vs. standard CoT samples.",
     "expected_conclusion": "A prompt-only “commitment + audit” protocol can make CoT aggregation meaningfully more reliable without finetuning or a trained verifier. PEC-SC is more novel than lexical-overlap reranking because it introduces *script-verifiable invariants* (audits) and explicit plan-item grounding (coverage), yielding a measurable mechanism for reducing step drift and variance. Practically, it improves accuracy at fixed budget while producing reasoning traces with clearer accountability—useful for safer deployment where users and developers need lightweight, transparent failure detection using only prompts and a small Python script."
+  },
+  "experimental_design": {
+    "experiment_summary": "Task: single-turn question answering where the model must produce a final answer to grade-school math word problems, optionally with intermediate reasoning, under a fixed generation budget. We test whether a prompt-only “commitment + audit” protocol (PEC-SC) improves answer accuracy and robustness compared to a standard self-consistency baseline when using the same underlying LLM and no fine-tuning.\n\nWorkflow (per example):\n1) Query the same model K times with a protocol-specific prompt.\n2) Parse each sample into sections (PLAN, EXECUTION, AUDIT, FINAL).\n3) Run a lightweight Python script to compute: (i) plan coverage via explicit (P#) tags in EXECUTION, (ii) audit pass rate via deterministic re-evaluation of simple arithmetic equalities emitted in AUDIT, and (iii) majority-vote FINAL answer.\n4) Select the best candidate using S(i)=α·I[ans_i=maj] + β·coverage(i) + (1−α−β)·audit_pass_rate(i), outputting its FINAL as the prediction.\n\nBaselines use the same model and total token budget: standard Self-Consistency (majority vote over K samples) with regular CoT, and PEC-SC with smaller per-sample max_tokens to keep total tokens approximately equal.\n\nScale fit to Runner environment: we evaluate only the GSM8K test split but subsample to N=200–500 questions (configurable) to keep API calls and runtime manageable. Use K=6 samples/question and small audits (M=3) to cap tokens. Run 5 random seeds by shuffling question order and sampling temperature seeds; report mean/stdev accuracy and variance metrics. No training, no GPUs required; only Python + datasets + model API.",
+    "compute_environment": {},
+    "evaluation_metrics": [
+      {
+        "name": "accuracy",
+        "description": "Correctness criteria: A prediction is correct if the extracted numeric FINAL answer matches the dataset’s gold answer as an integer after normalization (strip commas/spaces, take last integer in the gold rationale/answer field) and exact integer equality. If multiple integers appear in the model output, use the last integer in the FINAL line.\n\nCalculation method: accuracy = (# correct predictions) / (N evaluated questions).\n\nTask appropriateness: GSM8K is a discrete-answer math QA benchmark; correctness is naturally measured by whether the final numeric answer is correct.\n\nRelevant visualizations: (1) Bar chart of accuracy by method; (2) Accuracy vs. question index (or difficulty proxy like gold solution length) as a line plot; (3) Bootstrap 95% CI error bars for accuracy comparisons."
+      },
+      {
+        "name": "audit_pass_rate",
+        "description": "Correctness criteria: For each generated sample, audit checks are considered valid if they contain a parsable arithmetic equality expression (e.g., \"12+3=15\") and the equality holds under deterministic evaluation with a restricted safe parser. Non-parsable or unsafe expressions count as failures.\n\nCalculation method: For a sample i with C_i extracted checks, audit_pass_rate(i) = (1/|C_i|) * sum_j 1[check_{ij} evaluates True]. For a method, report mean audit_pass_rate over selected predictions, plus distribution (median/IQR).\n\nTask appropriateness: The hypothesis claims auditable invariants reduce drift; this metric measures the degree to which the protocol produces externally verifiable intermediate claims.\n\nRelevant visualizations: (1) Histogram/violin plot of audit_pass_rate across questions; (2) Scatter plot of audit_pass_rate vs. correctness (0/1) with a fitted logistic curve; (3) Reliability diagram by binning audit_pass_rate and plotting empirical accuracy per bin."
+      },
+      {
+        "name": "plan_coverage",
+        "description": "Correctness criteria: PLAN contains n numbered items (2–4 expected). EXECUTION must reference items using explicit tags like “(P1) …”. Coverage is the fraction of plan items referenced at least once.\n\nCalculation method: plan_coverage = (# unique plan indices referenced in EXECUTION that are within 1..n) / n. If PLAN is missing, define n=1 and coverage=0.\n\nTask appropriateness: Measures adherence to the ‘commitment’ part of the protocol (intent → execution linkage) with a regex-checkable contract.\n\nRelevant visualizations: (1) Box plot of coverage by method; (2) Stacked bar of coverage levels (0, 0.5, 1.0); (3) Coverage vs. audit_pass_rate scatter to diagnose failure modes."
+      },
+      {
+        "name": "seed_variance_accuracy",
+        "description": "Correctness criteria: Variance is computed across repeated evaluation runs with different random seeds affecting sampling (temperature seed) and question subsampling order (if subsampling is used).\n\nCalculation method: Run R=5 repeats, obtain accuracy_r for each. Report mean(accuracy_r), std(accuracy_r), and coefficient of variation (std/mean).\n\nTask appropriateness: The hypothesis claims reduced variance across samples without training a verifier; seed variance quantifies robustness of the aggregation protocol.\n\nRelevant visualizations: (1) Error bars (mean±std) of accuracy per method across seeds; (2) Paired dot plot of per-seed accuracies comparing SC vs PEC-SC."
+      },
+      {
+        "name": "token_efficiency",
+        "description": "Correctness criteria: Counts total generated tokens per question for each method, including all K samples (and for PEC-SC including PLAN/EXECUTION/AUDIT). Must stay within a fixed budget band (e.g., ±5%).\n\nCalculation method: token_efficiency = accuracy / (avg_generated_tokens_per_question). Also report avg_generated_tokens_per_question.\n\nTask appropriateness: The method claims budget-controlled gains; token-normalized accuracy makes tradeoffs explicit.\n\nRelevant visualizations: (1) Scatter plot of accuracy vs avg tokens with Pareto frontier; (2) Bar chart of avg tokens by method."
+      }
+    ],
+    "models_to_use": [
+      "gemini-2.5-flash (params unknown)"
+    ],
+    "datasets_to_use": [
+      "GSM8K"
+    ],
+    "proposed_method": {
+      "method_name": "PEC-SC (Plan-Execute-Check Self-Consistency)",
+      "description": "Inference-only, prompt-only aggregation protocol. For each of K sampled solutions, the model must output (1) a short atomic PLAN, (2) EXECUTION that explicitly references plan items via (P#) tags, (3) AUDIT containing M short arithmetic equality checks derived from intermediate computations, and (4) FINAL numeric answer. A Python script scores each sample by majority-answer agreement, plan coverage, and deterministic audit pass rate, selecting the best candidate under a composite score. Novelty: converts self-consistency into a script-verifiable internal contract without training a verifier or using another model.",
+      "optuna_config": {
+        "enabled": true,
+        "n_trials": 20,
+        "search_spaces": [
+          {
+            "param_name": "alpha",
+            "distribution_type": "uniform",
+            "low": 0.4,
+            "high": 0.8
+          },
+          {
+            "param_name": "beta",
+            "distribution_type": "uniform",
+            "low": 0.0,
+            "high": 0.4
+          },
+          {
+            "param_name": "K",
+            "distribution_type": "int",
+            "low": 3.0,
+            "high": 8.0
+          },
+          {
+            "param_name": "M",
+            "distribution_type": "int",
+            "low": 2.0,
+            "high": 4.0
+          },
+          {
+            "param_name": "max_tokens_per_sample",
+            "distribution_type": "int",
+            "low": 96.0,
+            "high": 256.0
+          },
+          {
+            "param_name": "temperature",
+            "distribution_type": "uniform",
+            "low": 0.4,
+            "high": 1.0
+          }
+        ]
+      }
+    },
+    "comparative_methods": [
+      {
+        "method_name": "Self-Consistency (SC) Majority Vote",
+        "description": "Standard baseline: generate K independent Chain-of-Thought samples with a regular CoT prompt and pick the most common extracted final numeric answer. No plan/audit constraints; selection is answer plurality only. Budget matched by using the same K and approximately the same total max generated tokens per question as PEC-SC.",
+        "optuna_config": {
+          "enabled": true,
+          "n_trials": 20,
+          "search_spaces": [
+            {
+              "param_name": "K",
+              "distribution_type": "int",
+              "low": 3.0,
+              "high": 10.0
+            },
+            {
+              "param_name": "max_tokens_per_sample",
+              "distribution_type": "int",
+              "low": 96.0,
+              "high": 256.0
+            },
+            {
+              "param_name": "temperature",
+              "distribution_type": "uniform",
+              "low": 0.4,
+              "high": 1.0
+            }
+          ]
+        }
+      }
+    ]
   }
 }
